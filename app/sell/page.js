@@ -7,9 +7,10 @@ export default function SellPage() {
   const [products, setProducts] = useState([]);
   const [selectedProductId, setSelectedProductId] = useState("");
   const [quantity, setQuantity] = useState(1);
+  const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // 1. ดึงรายการสินค้าที่มีอยู่เพื่อนำมาแสดงใน Dropdown
+  // 1. ดึงรายการสินค้าทั้งหมดเมื่อเริ่มหน้าเว็บ
   useEffect(() => {
     fetchProducts();
   }, []);
@@ -24,77 +25,114 @@ export default function SellPage() {
       alert("เกิดข้อผิดพลาดในการดึงรายการสินค้า: " + error.message);
     } else {
       setProducts(data || []);
-      // ตั้งค่าเริ่มต้นเลือกสินค้าชิ้นแรก (ถ้ามี)
       if (data && data.length > 0) {
         setSelectedProductId(data[0].id);
       }
     }
   };
 
-  // ค้นหาสินค้าปัจจุบันที่เลือกอยู่ใน Dropdown
   const selectedProduct = products.find((p) => p.id === selectedProductId);
 
-  // คำนวณราคารวมอัตโนมัติ
-  const totalPrice = selectedProduct
-    ? Number(selectedProduct.price) * (Number(quantity) || 0)
-    : 0;
-
-  // 2. จัดการการบันทึกการขายและตัดสต็อก
-  const handleSell = async (e) => {
+  // 2. เพิ่มสินค้าเข้าตะกร้า
+  const handleAddToCart = (e) => {
     e.preventDefault();
+    if (!selectedProduct) return;
 
-    if (!selectedProduct) {
-      alert("กรุณาเลือกสินค้า");
+    const qtyNum = Number(quantity);
+    if (qtyNum <= 0) {
+      alert("กรุณาระบุจำนวนสินค้าให้ถูกต้อง");
       return;
     }
 
-    const sellQty = Number(quantity);
+    // ตรวจสอบสต็อกว่าพอสำหรับสินค้าชิ้นนี้หรือไม่ (รวมที่อยู่ในตะกร้าแล้วด้วย)
+    const existingIndex = cart.findIndex((item) => item.product_id === selectedProduct.id);
+    const currentQtyInCart = existingIndex !== -1 ? cart[existingIndex].quantity : 0;
+    const totalRequestQty = currentQtyInCart + qtyNum;
 
-    if (sellQty <= 0) {
-      alert("จำนวนสินค้าต้องมากกว่า 0");
+    if (selectedProduct.stock < totalRequestQty) {
+      alert(`สินค้าในสต็อกไม่พอ! (มีคงเหลือ ${selectedProduct.stock} ${selectedProduct.unit || "ชิ้น"})`);
       return;
     }
 
-    // ตรวจสอบว่าสต็อกเพียงพอหรือไม่
-    if (selectedProduct.stock < sellQty) {
-      alert(
-        `สินค้าไม่พอขาย! (คงเหลือเพียง ${selectedProduct.stock} ${selectedProduct.unit || "ชิ้น"})`
-      );
+    if (existingIndex !== -1) {
+      // มีสินค้านี้ในตะกร้าแล้ว -> อัปเดตจำนวน
+      const updatedCart = [...cart];
+      const updatedQty = updatedCart[existingIndex].quantity + qtyNum;
+      updatedCart[existingIndex] = {
+        ...updatedCart[existingIndex],
+        quantity: updatedQty,
+        total_price: updatedQty * Number(selectedProduct.price),
+      };
+      setCart(updatedCart);
+    } else {
+      // ยังไม่มีในตะกร้า -> เพิ่มรายการใหม่
+      setCart([
+        ...cart,
+        {
+          product_id: selectedProduct.id,
+          product_name: selectedProduct.name,
+          price: Number(selectedProduct.price),
+          quantity: qtyNum,
+          total_price: qtyNum * Number(selectedProduct.price),
+          unit: selectedProduct.unit || "ชิ้น",
+          stock: selectedProduct.stock,
+        },
+      ]);
+    }
+
+    setQuantity(1); // รีเซ็ตจำนวนเป็น 1
+  };
+
+  // 3. ปรับจำนวนหรือลบสินค้าออกจากตะกร้า
+  const handleRemoveFromCart = (index) => {
+    const updatedCart = cart.filter((_, i) => i !== index);
+    setCart(updatedCart);
+  };
+
+  // 4. คำนวณราคารวมของทั้งตะกร้า
+  const grandTotal = cart.reduce((sum, item) => sum + item.total_price, 0);
+
+  // 5. ชำระเงิน/ขายสินค้าทั้งหมดในตะกร้า (อัปเดตสต็อกและลงตาราง sales)
+  const handleCheckout = async () => {
+    if (cart.length === 0) {
+      alert("กรุณาเลือกสินค้าใส่ตะกร้าก่อนทำรายการ");
       return;
     }
 
     setLoading(true);
 
     try {
-      // 2.1 บันทึกข้อมูลลงตาราง sales
-      const { error: salesError } = await supabase.from("sales").insert([
-        {
-          product_id: selectedProduct.id,
-          product_name: selectedProduct.name,
-          quantity: sellQty,
-          total_price: totalPrice,
-          sold_at: new Date().toISOString(),
-        },
-      ]);
+      const salesData = cart.map((item) => ({
+        product_id: item.product_id,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        total_price: item.total_price,
+        sold_at: new Date().toISOString(),
+      }));
 
+      // 5.1 บันทึกทุกรายการขายลงตาราง sales
+      const { error: salesError } = await supabase.from("sales").insert(salesData);
       if (salesError) throw salesError;
 
-      // 2.2 อัปเดตสต็อกในตาราง products
-      const newStock = selectedProduct.stock - sellQty;
-      const { error: updateError } = await supabase
-        .from("products")
-        .update({ stock: newStock })
-        .eq("id", selectedProduct.id);
+      // 5.2 ตัดสต็อกสินค้าแต่ละรายการในตาราง products
+      for (const item of cart) {
+        const targetProduct = products.find((p) => p.id === item.product_id);
+        if (targetProduct) {
+          const newStock = targetProduct.stock - item.quantity;
+          const { error: updateError } = await supabase
+            .from("products")
+            .update({ stock: newStock })
+            .eq("id", item.product_id);
 
-      if (updateError) throw updateError;
+          if (updateError) throw updateError;
+        }
+      }
 
-      alert(`ขายสำเร็จ! ตัดสต็อกเรียบร้อยแล้ว`);
-
-      // รีเซ็ตจำนวนและดึงข้อมูลสต็อกใหม่
-      setQuantity(1);
-      await fetchProducts();
+      alert("บันทึกการขายสำเร็จเรียบร้อย!");
+      setCart([]);
+      fetchProducts();
     } catch (err) {
-      alert("เกิดข้อผิดพลาดในการทำรายการ: " + err.message);
+      alert("เกิดข้อผิดพลาดในการขาย: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -102,18 +140,52 @@ export default function SellPage() {
 
   return (
     <div>
-      <h1 style={{ marginBottom: "1.5rem" }}>ขายสินค้า (POS)</h1>
+      {/* ส่วนสรุปราคารวมขนาดใหญ่ด้านบนสุด */}
+      <div
+        class="card"
+        style={{
+          backgroundColor: "#1e293b",
+          color: "#ffffff",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "1.5rem 2rem",
+          marginBottom: "1.5rem",
+          borderRadius: "12px",
+        }}
+      >
+        <div>
+          <span style={{ fontSize: "1rem", color: "#94a3b8" }}>ยอดรวมทั้งหมด (Grand Total)</span>
+          <h1 style={{ fontSize: "3rem", margin: 0, color: "#38bdf8", fontWeight: "800" }}>
+            ฿{grandTotal.toLocaleString()}
+          </h1>
+        </div>
+        <div>
+          <button
+            class="btn"
+            onClick={handleCheckout}
+            disabled={loading || cart.length === 0}
+            style={{
+              fontSize: "1.25rem",
+              padding: "0.8rem 2rem",
+              backgroundColor: cart.length > 0 ? "var(--success-color)" : "#64748b",
+              cursor: cart.length > 0 ? "pointer" : "not-allowed",
+            }}
+          >
+            {loading ? "กำลังบันทึก..." : "ยืนยันชำระเงิน"}
+          </button>
+        </div>
+      </div>
 
-      <div class="card" style={{ maxWidth: "600px", margin: "0 auto" }}>
-        <form onSubmit={handleSell}>
-          {/* Dropdown เลือกสินค้า */}
-          <div class="form-group">
-            <label>เลือกสินค้า</label>
-            {products.length === 0 ? (
-              <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
-                ไม่มีสินค้าในระบบ กรุณาเพิ่มสินค้าก่อน
-              </p>
-            ) : (
+      {/* สองคอลัมน์ให้อยู่ในจอเดียวกัน: ซ้ายเลือกสินค้า / ขวาตารางตะกร้า */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: "1.5rem" }}>
+        
+        {/* ฝั่งซ้าย: เลือกสินค้าใส่ตะกร้า */}
+        <div class="card">
+          <h2 style={{ fontSize: "1.2rem", marginBottom: "1rem" }}>1. เลือกสินค้า</h2>
+          <form onSubmit={handleAddToCart}>
+            <div class="form-group">
+              <label>รายการสินค้า</label>
               <select
                 class="input"
                 value={selectedProductId}
@@ -121,102 +193,83 @@ export default function SellPage() {
               >
                 {products.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name} — ฿{Number(item.price).toLocaleString()} (คงเหลือ{" "}
-                    {item.stock} {item.unit || "ชิ้น"})
+                    {item.name} — ฿{Number(item.price).toLocaleString()} (คงเหลือ {item.stock} {item.unit || "ชิ้น"})
                   </option>
                 ))}
               </select>
-            )}
-          </div>
-
-          {/* กรอกจำนวน */}
-          <div class="form-group">
-            <label>จำนวนที่จะขาย</label>
-            <input
-              type="number"
-              class="input"
-              min="1"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              required
-            />
-          </div>
-
-          {/* สรุปข้อมูลการขาย */}
-          {selectedProduct && (
-            <div
-              style={{
-                backgroundColor: "#f1f5f9",
-                padding: "1rem",
-                borderRadius: "6px",
-                marginBottom: "1.5rem",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  marginBottom: "0.5rem",
-                }}
-              >
-                <span>ราคาต่อหน่วย:</span>
-                <span>฿{Number(selectedProduct.price).toLocaleString()}</span>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  marginBottom: "0.5rem",
-                }}
-              >
-                <span>จำนวนคงเหลือในสต็อก:</span>
-                <span
-                  style={{
-                    color:
-                      selectedProduct.stock < Number(quantity)
-                        ? "var(--danger-color)"
-                        : "inherit",
-                    fontWeight:
-                      selectedProduct.stock < Number(quantity)
-                        ? "bold"
-                        : "normal",
-                  }}
-                >
-                  {selectedProduct.stock} {selectedProduct.unit || "ชิ้น"}
-                </span>
-              </div>
-              <hr
-                style={{
-                  border: "none",
-                  borderTop: "1px solid var(--border-color)",
-                  margin: "0.5rem 0",
-                }}
-              />
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: "1.2rem",
-                  fontWeight: "bold",
-                  color: "var(--primary-color)",
-                }}
-              >
-                <span>ราคารวมทั้งหมด:</span>
-                <span>฿{totalPrice.toLocaleString()}</span>
-              </div>
             </div>
-          )}
 
-          {/* ปุ่มยืนยันการขาย */}
-          <button
-            type="submit"
-            class="btn"
-            style={{ width: "100%", padding: "0.75rem", fontSize: "1rem" }}
-            disabled={loading || products.length === 0}
-          >
-            {loading ? "กำลังทำรายการ..." : "บันทึกการขาย"}
-          </button>
-        </form>
+            <div class="form-group">
+              <label>จำนวน</label>
+              <input
+                type="number"
+                class="input"
+                min="1"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                required
+              />
+            </div>
+
+            {selectedProduct && (
+              <div style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
+                ราคาชิ้นละ: <strong>฿{Number(selectedProduct.price).toLocaleString()}</strong> |
+                สต็อกคงเหลือ: <strong>{selectedProduct.stock} {selectedProduct.unit || "ชิ้น"}</strong>
+              </div>
+            )}
+
+            <button type="submit" class="btn" style={{ width: "100%", padding: "0.6rem" }}>
+              + เพิ่มเข้าตะกร้า
+            </button>
+          </form>
+        </div>
+
+        {/* ฝั่งขวา: ตะกร้าสินค้าและสรุปรายการ */}
+        <div class="card">
+          <h2 style={{ fontSize: "1.2rem", marginBottom: "1rem" }}>
+            2. ตะกร้าสินค้า ({cart.length} รายการ)
+          </h2>
+
+          {cart.length === 0 ? (
+            <p style={{ color: "var(--text-muted)", padding: "2rem 0", textAlign: "center" }}>
+              ยังไม่มีสินค้าในตะกร้า เลือกสินค้าจากด้านซ้ายเพื่อเริ่มขาย
+            </p>
+          ) : (
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>ชื่อสินค้า</th>
+                  <th style={{ textAlign: "right" }}>ราคา</th>
+                  <th style={{ textAlign: "center" }}>จำนวน</th>
+                  <th style={{ textAlign: "right" }}>รวม</th>
+                  <th style={{ textAlign: "center" }}>ลบ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cart.map((item, index) => (
+                  <tr key={index}>
+                    <td style={{ fontWeight: "500" }}>{item.product_name}</td>
+                    <td style={{ textAlign: "right" }}>฿{item.price.toLocaleString()}</td>
+                    <td style={{ textAlign: "center" }}>{item.quantity}</td>
+                    <td style={{ textAlign: "right", fontWeight: "bold" }}>
+                      ฿{item.total_price.toLocaleString()}
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      <button
+                        class="btn btn-danger"
+                        style={{ padding: "0.2rem 0.5rem", fontSize: "0.75rem" }}
+                        onClick={() => handleRemoveFromCart(index)}
+                      >
+                        X
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
       </div>
     </div>
   );
