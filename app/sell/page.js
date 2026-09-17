@@ -33,6 +33,33 @@ export default function SellPage() {
 
   const selectedProduct = products.find((p) => p.id === selectedProductId);
 
+  // ฟังก์ชันช่วยเหลือในการยิง Telegram API
+  const sendTelegramMessage = async (messageText) => {
+    const botToken = process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID;
+
+    if (!botToken || !chatId) {
+      console.warn("ไม่ได้ตั้งค่า Telegram Bot Token หรือ Chat ID ใน Environment Variables");
+      return;
+    }
+
+    try {
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: messageText,
+          parse_mode: "HTML",
+        }),
+      });
+    } catch (err) {
+      console.error("ส่งการแจ้งเตือน Telegram ไม่สำเร็จ:", err);
+    }
+  };
+
   // 2. เพิ่มสินค้าเข้าตะกร้า
   const handleAddToCart = (e) => {
     e.preventDefault();
@@ -92,7 +119,7 @@ export default function SellPage() {
   // 4. คำนวณราคารวมของทั้งตะกร้า
   const grandTotal = cart.reduce((sum, item) => sum + item.total_price, 0);
 
-  // 5. ชำระเงิน/ขายสินค้าทั้งหมดในตะกร้า (อัปเดตสต็อกและลงตาราง sales)
+  // 5. ชำระเงิน/ขายสินค้าทั้งหมดในตะกร้า (อัปเดตสต็อก, ลงตาราง sales และแจ้งเตือน Telegram)
   const handleCheckout = async () => {
     if (cart.length === 0) {
       alert("กรุณาเลือกสินค้าใส่ตะกร้าก่อนทำรายการ");
@@ -114,21 +141,53 @@ export default function SellPage() {
       const { error: salesError } = await supabase.from("sales").insert(salesData);
       if (salesError) throw salesError;
 
-      // 5.2 ตัดสต็อกสินค้าแต่ละรายการในตาราง products
+      const currentTime = new Date().toLocaleString("th-TH", {
+        timeZone: "Asia/Bangkok",
+      });
+
+      // 5.2 ตัดสต็อกสินค้าแต่ละรายการในตาราง products พร้อมส่งแจ้งเตือน Telegram
       for (const item of cart) {
         const targetProduct = products.find((p) => p.id === item.product_id);
         if (targetProduct) {
           const newStock = targetProduct.stock - item.quantity;
+
+          // อัปเดตสต็อกใน Supabase
           const { error: updateError } = await supabase
             .from("products")
             .update({ stock: newStock })
             .eq("id", item.product_id);
 
           if (updateError) throw updateError;
+
+          // ----------------------------------------------------
+          // ระบบแจ้งเตือน Telegram (ทำงานแบบ Async ไม่บล็อก UI)
+          // ----------------------------------------------------
+
+          // งานที่ 1: แจ้งเตือน Order เข้า (New Order Alert)
+          const newOrderMsg =
+            `🛍️ <b>มีรายการขายใหม่!</b>\n\n` +
+            `- สินค้า: ${item.product_name}\n` +
+            `- จำนวน: ${item.quantity} ${item.unit || "ชิ้น"}\n` +
+            `- ราคารวม: ${item.total_price.toLocaleString()} บาท\n` +
+            `- สต๊อกคงเหลือปัจจุบัน: ${newStock} ${item.unit || "ชิ้น"}\n` +
+            `- เวลา: ${currentTime}`;
+
+          await sendTelegramMessage(newOrderMsg);
+
+          // งานที่ 2: แจ้งเตือน Stock เหลือน้อย (Low Stock Alert <= 5 ชิ้น)
+          if (newStock <= 5) {
+            const lowStockMsg =
+              `🚨 <b>[เตือนภัย] สต๊อกสินค้าใกล้หมด!</b>\n\n` +
+              `- สินค้า: ${item.product_name}\n` +
+              `- คงเหลือเพียง: ${newStock} ${item.unit || "ชิ้น"}\n\n` +
+              `⚠️ กรุณาเติมสต๊อกสินค้าด่วน!`;
+
+            await sendTelegramMessage(lowStockMsg);
+          }
         }
       }
 
-      alert("บันทึกการขายสำเร็จเรียบร้อย!");
+      alert("บันทึกการขายและส่งแจ้งเตือนสำเร็จเรียบร้อย!");
       setCart([]);
       fetchProducts();
     } catch (err) {
