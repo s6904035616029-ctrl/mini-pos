@@ -33,7 +33,7 @@ export default function SellPage() {
 
   const selectedProduct = products.find((p) => p.id === selectedProductId);
 
-  // ฟังก์ชันช่วยเหลือในการยิง Telegram API
+  // ฟังก์ชันยิงข้อความเข้า Telegram API (หุ้มด้วย try-catch เพื่อป้องกันกระทบการขาย)
   const sendTelegramMessage = async (messageText) => {
     const botToken = process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN;
     const chatId = process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID;
@@ -71,7 +71,7 @@ export default function SellPage() {
       return;
     }
 
-    // ตรวจสอบสต็อกว่าพอสำหรับสินค้าชิ้นนี้หรือไม่ (รวมที่อยู่ในตะกร้าแล้วด้วย)
+    // ตรวจสอบสต็อกว่าพอสำหรับสินค้าชิ้นนี้หรือไม่
     const existingIndex = cart.findIndex((item) => item.product_id === selectedProduct.id);
     const currentQtyInCart = existingIndex !== -1 ? cart[existingIndex].quantity : 0;
     const totalRequestQty = currentQtyInCart + qtyNum;
@@ -82,7 +82,6 @@ export default function SellPage() {
     }
 
     if (existingIndex !== -1) {
-      // มีสินค้านี้ในตะกร้าแล้ว -> อัปเดตจำนวน
       const updatedCart = [...cart];
       const updatedQty = updatedCart[existingIndex].quantity + qtyNum;
       updatedCart[existingIndex] = {
@@ -92,7 +91,6 @@ export default function SellPage() {
       };
       setCart(updatedCart);
     } else {
-      // ยังไม่มีในตะกร้า -> เพิ่มรายการใหม่
       setCart([
         ...cart,
         {
@@ -107,7 +105,7 @@ export default function SellPage() {
       ]);
     }
 
-    setQuantity(1); // รีเซ็ตจำนวนเป็น 1
+    setQuantity(1);
   };
 
   // 3. ปรับจำนวนหรือลบสินค้าออกจากตะกร้า
@@ -119,7 +117,7 @@ export default function SellPage() {
   // 4. คำนวณราคารวมของทั้งตะกร้า
   const grandTotal = cart.reduce((sum, item) => sum + item.total_price, 0);
 
-  // 5. ชำระเงิน/ขายสินค้าทั้งหมดในตะกร้า (อัปเดตสต็อก, ลงตาราง sales และแจ้งเตือน Telegram)
+  // 5. ชำระเงิน/ขายสินค้า ตัดสต็อก Supabase และยิงแจ้งเตือน Telegram
   const handleCheckout = async () => {
     if (cart.length === 0) {
       alert("กรุณาเลือกสินค้าใส่ตะกร้าก่อนทำรายการ");
@@ -160,7 +158,7 @@ export default function SellPage() {
           if (updateError) throw updateError;
 
           // ----------------------------------------------------
-          // ระบบแจ้งเตือน Telegram (ทำงานแบบ Async ไม่บล็อก UI)
+          // ส่ง Telegram Notification
           // ----------------------------------------------------
 
           // งานที่ 1: แจ้งเตือน Order เข้า (New Order Alert)
@@ -187,7 +185,7 @@ export default function SellPage() {
         }
       }
 
-      alert("บันทึกการขายและส่งแจ้งเตือนสำเร็จเรียบร้อย!");
+      alert("บันทึกการขายสำเร็จเรียบร้อย!");
       setCart([]);
       fetchProducts();
     } catch (err) {
@@ -199,9 +197,9 @@ export default function SellPage() {
 
   return (
     <div>
-      {/* ส่วนสรุปราคารวมขนาดใหญ่ด้านบนสุด */}
+      {/* สรุปราคารวมขนาดใหญ่ด้านบนสุด */}
       <div
-        class="card"
+        className="card"
         style={{
           backgroundColor: "#1e293b",
           color: "#ffffff",
@@ -221,7 +219,7 @@ export default function SellPage() {
         </div>
         <div>
           <button
-            class="btn"
+            className="btn"
             onClick={handleCheckout}
             disabled={loading || cart.length === 0}
             style={{
@@ -236,17 +234,16 @@ export default function SellPage() {
         </div>
       </div>
 
-      {/* สองคอลัมน์ให้อยู่ในจอเดียวกัน: ซ้ายเลือกสินค้า / ขวาตารางตะกร้า */}
+      {/* สองคอลัมน์ให้อยู่ในจอเดียวกัน */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: "1.5rem" }}>
-        
-        {/* ฝั่งซ้าย: เลือกสินค้าใส่ตะกร้า */}
-        <div class="card">
+        {/* ฝั่งซ้าย: เลือกสินค้า */}
+        <div className="card">
           <h2 style={{ fontSize: "1.2rem", marginBottom: "1rem" }}>1. เลือกสินค้า</h2>
           <form onSubmit={handleAddToCart}>
-            <div class="form-group">
+            <div className="form-group">
               <label>รายการสินค้า</label>
               <select
-                class="input"
+                className="input"
                 value={selectedProductId}
                 onChange={(e) => setSelectedProductId(e.target.value)}
               >
@@ -258,11 +255,11 @@ export default function SellPage() {
               </select>
             </div>
 
-            <div class="form-group">
+            <div className="form-group">
               <label>จำนวน</label>
               <input
                 type="number"
-                class="input"
+                className="input"
                 min="1"
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
@@ -277,14 +274,14 @@ export default function SellPage() {
               </div>
             )}
 
-            <button type="submit" class="btn" style={{ width: "100%", padding: "0.6rem" }}>
+            <button type="submit" className="btn" style={{ width: "100%", padding: "0.6rem" }}>
               + เพิ่มเข้าตะกร้า
             </button>
           </form>
         </div>
 
-        {/* ฝั่งขวา: ตะกร้าสินค้าและสรุปรายการ */}
-        <div class="card">
+        {/* ฝั่งขวา: ตะกร้าสินค้า */}
+        <div className="card">
           <h2 style={{ fontSize: "1.2rem", marginBottom: "1rem" }}>
             2. ตะกร้าสินค้า ({cart.length} รายการ)
           </h2>
@@ -294,7 +291,7 @@ export default function SellPage() {
               ยังไม่มีสินค้าในตะกร้า เลือกสินค้าจากด้านซ้ายเพื่อเริ่มขาย
             </p>
           ) : (
-            <table class="table">
+            <table className="table">
               <thead>
                 <tr>
                   <th>ชื่อสินค้า</th>
@@ -315,7 +312,7 @@ export default function SellPage() {
                     </td>
                     <td style={{ textAlign: "center" }}>
                       <button
-                        class="btn btn-danger"
+                        className="btn btn-danger"
                         style={{ padding: "0.2rem 0.5rem", fontSize: "0.75rem" }}
                         onClick={() => handleRemoveFromCart(index)}
                       >
@@ -328,7 +325,6 @@ export default function SellPage() {
             </table>
           )}
         </div>
-
       </div>
     </div>
   );
